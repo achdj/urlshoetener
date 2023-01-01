@@ -12,7 +12,7 @@ let Schema = mongoose.Schema;
 
 const TIMEOUT = 10000;
 const db = process.env['MONGO_URI'];
-var url;
+var Url;
 
 
 mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true });
@@ -54,7 +54,47 @@ const urlSchema = new Schema({
 urlSchema.index({ original_url: 1, short_url: 1 });
 
 /** Create and Save a url */
-url = mongoose.model("Url", urlSchema);
+Url = mongoose.model("Url", urlSchema);
+
+app.post("/api/shorturl", function (req, res, next) {
+  let t = setTimeout(() => {
+    next({ message: "timeout" });
+  }, TIMEOUT);
+
+  const urlToTest = req.body.url;
+
+  try {
+    //TODO evaluate other libraries for validation
+    if (validate({website: urlToTest }, {website: {url: true}}) !== undefined)        throw new Error('Invalid URL');
+
+    const urlObject = new URL(urlToTest);
+
+    dns.lookup(urlObject.hostname, (err, address, family) => {
+      if (err) throw err;
+    
+      if (mongoose && mongoose.connection.readyState) {
+        Url.findOne({original_url: urlToTest})
+        .then(urlFound => {
+          if (urlFound) return urlFound;
+          return Url.create({'original_url': urlToTest}); 
+        })
+        .then(url => {
+          const {original_url, short_url} = url;
+
+          res.status(200).json({ original_url : original_url, short_url : short_url });
+        })
+        .catch(err => res.status(200).json({ error: err.message }));
+
+      } else {
+        throw new Error('Could not connect to the database.');
+      }
+    })
+  }catch (error) {
+    console.log(error);
+    res.status(200).json({ error: error.message });
+  }
+  
+});
 
 app.get('/api/shorturl/:url', (req, res, next) => {
   const { url } = req.params;
