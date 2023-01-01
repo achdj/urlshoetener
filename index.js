@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const app = express();
 var dns = require('dns');
-const { nanoid } = require('nanoid');
+const nanoid = require('nanoid');
 const url = require('url');
 const validate = require('validate.js');
 
