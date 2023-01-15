@@ -3,9 +3,9 @@ const express = require('express');
 const cors = require('cors');
 const app = express();
 var dns = require('dns');
-const nanoid = require('nanoid');
 const url = require('url');
 const validate = require('validate.js');
+const bodyParser = require('body-parser');
 
 let mongoose = require('mongoose');
 let Schema = mongoose.Schema;
@@ -14,14 +14,15 @@ const TIMEOUT = 10000;
 const db = process.env['MONGO_URI'];
 var Url;
 
+mongoose.connect(db, { useNewUrlParser: true, useUnifiedTopology: true, autoIndex: false });
 
-mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true });
 
 // Basic Configuration
 const port = process.env.PORT || 3000;
 
 app.use(cors());
-
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 app.use('/public', express.static(`${process.cwd()}/public`));
 
 app.get('/', function(req, res) {
@@ -44,9 +45,8 @@ const urlSchema = new Schema({
     unique: true
   },
   short_url: {
-    type: String,
+    type: Number,
     unique: true,
-    default: () => nanoid()
   }
 });
 
@@ -56,7 +56,7 @@ urlSchema.index({ original_url: 1, short_url: 1 });
 /** Create and Save a url */
 Url = mongoose.model("Url", urlSchema);
 
-app.post("/api/shorturl", function (req, res, next) {
+app.post("/api/shorturl", function(req, res, next) {
   let t = setTimeout(() => {
     next({ message: "timeout" });
   }, TIMEOUT);
@@ -65,43 +65,44 @@ app.post("/api/shorturl", function (req, res, next) {
 
   try {
     //TODO evaluate other libraries for validation
-    if (validate({website: urlToTest }, {website: {url: true}}) !== undefined)        throw new Error('Invalid URL');
+    if (validate({ website: urlToTest }, { website: { url: true } }) !== undefined) throw new Error('Invalid URL');
 
     const urlObject = new URL(urlToTest);
 
     dns.lookup(urlObject.hostname, (err, address, family) => {
+      clearTimeout(t);
       if (err) throw err;
-    
-      if (mongoose && mongoose.connection.readyState) {
-        Url.findOne({original_url: urlToTest})
-        .then(urlFound => {
-          if (urlFound) return urlFound;
-          return Url.create({'original_url': urlToTest}); 
-        })
-        .then(url => {
-          const {original_url, short_url} = url;
-
-          res.status(200).json({ original_url : original_url, short_url : short_url });
-        })
-        .catch(err => res.status(200).json({ error: err.message }));
-
-      } else {
-        throw new Error('Could not connect to the database.');
-      }
-    })
-  }catch (error) {
-    console.log(error);
-    res.status(200).json({ error: error.message });
+      // Check for existing short url
+      Url.findOne({ original_url: urlToTest }, (err, data) => {
+        if (err) throw err;
+        if (data) {
+          return res.json({ original_url: data.original_url, short_url: data.short_url });
+        }
+        // Create new short url
+        Url.countDocuments({}, (err, count) => {
+          if (err) throw err;
+          const newUrl = new Url({
+            original_url: urlToTest,
+            short_url: count + 1
+          });
+          newUrl.save((err) => {
+            if (err) throw err;
+            return res.json({ original_url: newUrl.original_url, short_url: newUrl.short_url });
+          });
+        });
+      });
+    });
+  } catch (err) {
+    return res.json({ error: 'invalid url' });
   }
-  
 });
 
-app.get('/api/shorturl/:url', (req, res, next) => {
-  const { url } = req.params;
-  Url.findOne({ short_url: url })
-  .then(url => {
-    if (!url) { throw new Error('invalid url'); }
-    res.redirect(url.original_url);
-   })
-   .catch(err => res.status(200).json({ error: err.message }));
+app.get("/api/shorturl/:short_url", function(req, res, next) {
+  Url.findOne({ short_url: req.params.short_url }, (err, data) => {
+    if (err) throw err;
+    if (!data) {
+      return res.json({ error: 'invalid short url' });
+    }
+    return res.redirect(data.original_url);
+  });
 });
